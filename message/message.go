@@ -6,6 +6,8 @@
  */
 package message
 
+var Broadcast chan []byte
+
 //消息类型
 type Message struct {
 	Sender    string `json:"sender"`    //发送者

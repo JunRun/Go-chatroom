@@ -10,8 +10,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/JunRun/Go-chatroom/message"
-	"github.com/JunRun/Go-chatroom/server"
 	"github.com/gorilla/websocket"
+	"github.com/rs/xid"
 )
 
 type Client struct {
@@ -20,15 +20,25 @@ type Client struct {
 	Message chan []byte     // 发送的消息
 }
 
-func (c *Client) read() {
+func NewClient(socket *websocket.Conn) *Client {
+	c := &Client{
+		Id:      xid.New().String(),
+		Socket:  socket,
+		Message: nil,
+	}
+	AddChannel <- c
+	return c
+}
+
+func (c *Client) Read() {
 	defer func() {
-		server.Manager.UnRegister <- c
+		//发送退出信号
+		QuitChannel <- c
 		c.Socket.Close()
 	}()
 	for {
 		_, info, err := c.Socket.ReadMessage()
 		if err != nil {
-			server.Manager.UnRegister <- c
 			fmt.Println("读取信息失败，conn=", c.Id, err)
 			break
 		}
@@ -36,13 +46,14 @@ func (c *Client) read() {
 			Sender:  c.Id,
 			Content: string(info),
 		})
-		server.Manager.Broadcast <- jsonMe
+		message.Broadcast <- jsonMe
 	}
 
 }
 
 func (c *Client) Write() {
 	defer func() {
+		QuitChannel <- c
 		c.Socket.Close()
 	}()
 
@@ -52,7 +63,7 @@ func (c *Client) Write() {
 			if !ok {
 				c.Socket.WriteMessage(websocket.CloseMessage, []byte{})
 			}
-			if s := c.Socket.WriteMessage(websocket.TextMessage, Info).Error(); s {
+			if s := c.Socket.WriteMessage(websocket.TextMessage, Info).Error; s != nil {
 				fmt.Println("回写信息失败", c.Id, s)
 			}
 		default:

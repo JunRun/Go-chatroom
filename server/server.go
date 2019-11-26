@@ -7,66 +7,25 @@
 package server
 
 import (
-	"encoding/json"
-	"github.com/JunRun/Go-chatroom/message"
 	"github.com/JunRun/Go-chatroom/rclient"
+	"github.com/gorilla/websocket"
+	"net/http"
 )
 
-type ManageClient struct {
-	//客户端 map 储存并管理有的长连接client，在线的为true，不在的为false
-	ClientMap map[*rclient.Client]bool
-	//web端发送来的的message我们用broadcast来接收，并最后分发给所有的client
-	Broadcast chan []byte
-	//新创建的长连接client
-	Register   chan *rclient.Client
-	UnRegister chan *rclient.Client
-}
-
-func NewManager() *ManageClient {
-	return &ManageClient{
-		ClientMap:  make(map[*rclient.Client]bool),
-		Broadcast:  make(chan []byte),
-		Register:   make(chan *rclient.Client),
-		UnRegister: make(chan *rclient.Client),
+//web端发送来的的message我们用broadcast来接收，并最后分发给所有的client
+func WsHandler(res http.ResponseWriter, req *http.Request) {
+	//将http协议升级成websocket协议
+	conn, err := (&websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}).Upgrade(res, req, nil)
+	if err != nil {
+		http.NotFound(res, req)
+		return
 	}
-}
 
-func (m *ManageClient) Start() {
-	for {
-		//开始监听
-		select {
-		//如果有新连接接入，就通过channel 把链接传递给conn
-		case conn := <-m.Register:
-			//将链接传入管理map
-			m.ClientMap[conn] = true
-			message, _ := json.Marshal(&message.Message{
-				Content: "A new socket has connected",
-			})
-			m.Send(message, conn)
-		//如果有连接退出
-		case conn := <-m.UnRegister:
-			if _, ok := m.ClientMap[conn]; ok {
-				close(conn.Message)
-				delete(m.ClientMap, conn)
-			}
-			jsonMessage, _ := json.Marshal(&message.Message{Content: "/A socket has disconnected."})
-			m.Send(jsonMessage, conn)
+	client := rclient.NewClient(conn)
+	//注册一个新的链接
 
-		case message := <-m.Broadcast:
-			for conn := range m.ClientMap {
-				conn.Message <- message
-
-			}
-
-		}
-	}
-}
-
-func (m *ManageClient) Send(message []byte, ignore *rclient.Client) {
-	for conn := range m.ClientMap {
-		if conn != ignore {
-			conn.Message <- message
-		}
-
-	}
+	//启动协程收web端传过来的消息
+	go client.Read()
+	//启动协程把消息返回给web端
+	go client.Write()
 }
